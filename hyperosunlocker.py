@@ -11,7 +11,7 @@ import json
 
 # === HEADLESS MODE FOR GITHUB ACTIONS ===
 # Token is read from environment variable XIAOMI_TOKEN
-# No browser popups, no manual input, no colorama needed
+# Discord notifications via DISCORD_WEBHOOK
 
 ntp_servers = [
     "ntp0.ntp-servers.net", "ntp1.ntp-servers.net", "ntp2.ntp-servers.net",
@@ -24,13 +24,45 @@ if not token_input:
     print("[ERROR] XIAOMI_TOKEN environment variable not set!")
     sys.exit(1)
 
-print("[INFO] Checking Account Status...")
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
+
 cookie_value = token_input.strip()
 feedtime = float(1400)
 feed_time_shift = feedtime
 feed_time_shift_1 = feed_time_shift / 1000
 
-MAX_REQUESTS = 50  # Safety limit to avoid infinite loop in Actions
+MAX_REQUESTS = 50
+
+# ============================
+# Discord Webhook Notification
+# ============================
+def send_discord(title, message, success=True):
+    if not DISCORD_WEBHOOK:
+        print("[WARN] DISCORD_WEBHOOK not set, skipping notification.")
+        return
+    color = 0x00FF00 if success else 0xFF0000  # green or red
+    payload = {
+        "embeds": [{
+            "title": title,
+            "description": message,
+            "color": color,
+            "footer": {"text": "Xiaomi Auto-Unlocker Bot"},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }]
+    }
+    try:
+        http = urllib3.PoolManager()
+        resp = http.request(
+            "POST",
+            DISCORD_WEBHOOK,
+            body=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        print(f"[Discord] Notification sent (status {resp.status})")
+    except Exception as e:
+        print(f"[Discord] Failed to send notification: {e}")
+
+# ============================
 
 def generate_device_id():
     random_data = f"{random.random()}-{time.time()}"
@@ -61,8 +93,6 @@ def get_synchronized_beijing_time(start_beijing_time, start_timestamp):
 def wait_until_target_time(start_beijing_time, start_timestamp):
     beijing_now = get_synchronized_beijing_time(start_beijing_time, start_timestamp)
 
-    # If it's before midnight, target is today's midnight
-    # If it's after midnight (e.g. 00:01), target is tomorrow's midnight
     today_midnight = beijing_now.replace(hour=0, minute=0, second=0, microsecond=0)
     if beijing_now >= today_midnight:
         target_time = today_midnight + timedelta(days=1) - timedelta(seconds=feed_time_shift_1)
@@ -106,6 +136,11 @@ def check_unlock_status(session, cookie_value, device_id):
 
         if response_data.get("code") == 100004:
             print("[ERROR] Expired Cookie. You need to update XIAOMI_TOKEN with a fresh token.")
+            send_discord(
+                "Cookie Expired",
+                "Your `new_bbs_serviceToken` has expired.\nGo to GitHub repo > Settings > Secrets and update `XIAOMI_TOKEN` with a fresh cookie.",
+                success=False
+            )
             sys.exit(1)
 
         data = response_data.get("data", {})
@@ -125,11 +160,20 @@ def check_unlock_status(session, cookie_value, device_id):
                 return True
         elif is_pass == 1:
             print(f"[OK] Account Status: REQUEST ALREADY APPROVED! Unlock before {deadline_format}.")
-            print("[OK] Go to Developer Options > Mi Unlock Status > Add account and device!")
+            send_discord(
+                "Already Approved!",
+                f"Your bootloader unlock request was **already approved**!\nDeadline: **{deadline_format}**\n\nGo to:\n`Settings > Developer Options > Mi Unlock Status > Add account and device`",
+                success=True
+            )
             sys.exit(0)
         else:
             print(f"[ERROR] Account Status: Unknown state. is_pass={is_pass}, button_state={button_state}")
             print(f"[ERROR] Full response: {response_data}")
+            send_discord(
+                "Unknown Account State",
+                f"is_pass={is_pass}, button_state={button_state}\n```json\n{json.dumps(response_data, indent=2)}\n```",
+                success=False
+            )
             sys.exit(1)
     except Exception as e:
         print(f"[ERROR] Status check failed: {e}")
@@ -173,6 +217,7 @@ class HTTP11Session:
             return None
 
 def main():
+    print("[INFO] Checking Account Status...")
     device_id = generate_device_id()
     session = HTTP11Session()
 
@@ -180,6 +225,7 @@ def main():
         start_beijing_time = get_initial_beijing_time()
         if start_beijing_time is None:
             print("[ERROR] Failed to get Beijing time from any NTP server.")
+            send_discord("NTP Error", "Could not sync Beijing time from any NTP server. Bot did not fire.", success=False)
             sys.exit(1)
 
         start_timestamp = time.time()
@@ -217,23 +263,46 @@ def main():
                         if apply_result == 1:
                             print("======================================")
                             print("[OK] REQUEST APPROVED!")
-                            print("[OK] Go to your phone NOW:")
-                            print("[OK] Settings > Developer Options > Mi Unlock Status > Add account and device")
                             print("======================================")
+                            send_discord(
+                                "BOOTLOADER UNLOCK APPROVED!",
+                                "Your Xiaomi bootloader unlock request was **APPROVED**!\n\n"
+                                "**Go to your phone NOW:**\n"
+                                "1. Make sure Wi-Fi is OFF, Mobile Data is ON\n"
+                                "2. `Settings > Developer Options > Mi Unlock Status`\n"
+                                "3. Tap **Add account and device**\n"
+                                "4. Then use Mi Unlock Tool on PC (wait 72h if prompted)",
+                                success=True
+                            )
                             check_unlock_status(session, cookie_value, device_id)
                             sys.exit(0)
                         elif apply_result == 3:
                             deadline_format = data.get("deadline_format", "Not declared")
                             print(f"[FAIL] Quota reached. Try again at {deadline_format} (Month/Day).")
+                            send_discord(
+                                "Quota Reached - Didn't Make It",
+                                f"Daily quota was already taken by other users.\nNext window: **{deadline_format}** (Month/Day)\n\nThe bot will try again tomorrow automatically.",
+                                success=False
+                            )
                             sys.exit(1)
                         elif apply_result == 4:
                             deadline_format = data.get("deadline_format", "Not declared")
                             print(f"[FAIL] Account blocked until {deadline_format} (Month/Day).")
+                            send_discord(
+                                "Account Blocked",
+                                f"Your account is blocked until **{deadline_format}** (Month/Day).\nThis could be a cooldown from a previous unlock.",
+                                success=False
+                            )
                             sys.exit(1)
                     elif code == 100001:
                         print(f"[Status] Request rejected. Response: {json_response}")
                     elif code == 100003:
                         print(f"[Status] Possibly approved! Response: {json_response}")
+                        send_discord(
+                            "Possibly Approved?!",
+                            f"Got code 100003 which may indicate success.\nCheck your phone!\n```json\n{json.dumps(json_response, indent=2)}\n```",
+                            success=True
+                        )
                         check_unlock_status(session, cookie_value, device_id)
                     elif code is not None:
                         print(f"[Status] Unknown code: {code}. Response: {json_response}")
@@ -246,10 +315,16 @@ def main():
                     print(f"[Error] Response processing: {e}")
                     continue
 
-            print(f"[INFO] Finished {MAX_REQUESTS} requests. Check Actions log for results.")
+            print(f"[INFO] Finished {MAX_REQUESTS} requests without clear result.")
+            send_discord(
+                "Run Finished - No Clear Result",
+                f"Sent {MAX_REQUESTS} requests but didn't get a definitive approved/denied.\nCheck the Actions log for details.\nThe bot will try again tomorrow.",
+                success=False
+            )
 
         except Exception as e:
             print(f"[Request Error] {e}")
+            send_discord("Script Error", f"The bot crashed:\n```\n{e}\n```", success=False)
             sys.exit(1)
 
 if __name__ == "__main__":

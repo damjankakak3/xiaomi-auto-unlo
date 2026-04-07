@@ -27,4 +27,5 @@ jobs:
       - name: Run Unlocker Bot
         env:
           XIAOMI_TOKEN: ${{ secrets.XIAOMI_TOKEN }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python hyperosunlocker.py
