@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install ntplib pytz urllib3 icmplib
+        run: pip install ntplib pytz urllib3
 
       - name: Run Unlocker Bot
         env:
