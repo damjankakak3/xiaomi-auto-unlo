@@ -12,6 +12,7 @@ import json
 # === HEADLESS MODE FOR GITHUB ACTIONS ===
 # Token is read from environment variable XIAOMI_TOKEN
 # Discord notifications via DISCORD_WEBHOOK
+# icmplib and colorama removed (not needed, icmplib needs root)
 
 ntp_servers = [
     "ntp0.ntp-servers.net", "ntp1.ntp-servers.net", "ntp2.ntp-servers.net",

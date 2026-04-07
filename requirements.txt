@@ -1,6 +1,3 @@
-requests
 ntplib
 pytz
 urllib3
-icmplib
-colorama
