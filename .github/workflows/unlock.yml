@@ -1,0 +1,30 @@
+name: Auto Xiaomi Bootloader Unlocker
+
+on:
+  schedule:
+    # 15:50 UTC = 23:50 Beijing Time. Boots 10 min early so the script
+    # has time to sync NTP and wait for exactly 00:00:00 Beijing.
+    - cron: '50 15 * * *'
+  workflow_dispatch:  # Manual trigger button in Actions tab
+
+jobs:
+  unlock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20  # Kill if it runs longer than 20 min
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install ntplib pytz urllib3 icmplib
+
+      - name: Run Unlocker Bot
+        env:
+          XIAOMI_TOKEN: ${{ secrets.XIAOMI_TOKEN }}
+        run: python hyperosunlocker.py
